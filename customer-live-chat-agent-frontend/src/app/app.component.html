@@ -1,0 +1,134 @@
+<div class="agent-shell">
+  <section class="signin-card" *ngIf="!agentSession(); else consoleView">
+    <h1>Agent Console</h1>
+    <p>Sign in to start helping customers in real time.</p>
+    <form [formGroup]="loginForm" (ngSubmit)="signIn()">
+      <label>
+        <span>Agent ID</span>
+        <input formControlName="agentId" placeholder="agent-001" />
+        <small class="error" *ngIf="loginForm.controls.agentId.invalid && loginForm.controls.agentId.touched">
+          Please enter your agent identifier.
+        </small>
+      </label>
+      <label>
+        <span>Display name</span>
+        <input formControlName="displayName" placeholder="Alex Carter" />
+        <small class="error" *ngIf="loginForm.controls.displayName.invalid && loginForm.controls.displayName.touched">
+          Customers will see this name in the chat.
+        </small>
+      </label>
+      <button class="btn btn-primary" type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <ng-template #consoleView>
+    <header class="console-header">
+      <div>
+        <h1>Agent Console</h1>
+        <p>{{ statusText() }}</p>
+      </div>
+      <div class="agent-meta">
+        <div class="agent-meta__info">
+          <strong>{{ agentSession()?.displayName }}</strong>
+          <span>{{ agentSession()?.agentId }}</span>
+        </div>
+        <button type="button" class="btn btn-secondary" (click)="signOut()">Sign out</button>
+      </div>
+    </header>
+
+    <section class="console-content">
+      <aside class="queue-panel">
+        <header>
+          <div>
+            <h2>Live queue</h2>
+            <small>Waiting customers</small>
+          </div>
+          <div class="queue-actions">
+            <span class="badge">{{ queue().length }}</span>
+            <button type="button" class="icon-button" (click)="refreshQueue()" aria-label="Refresh queue">Refresh</button>
+          </div>
+        </header>
+
+        <p class="panel-error" *ngIf="queueError()">{{ queueError() }}</p>
+
+        <ul *ngIf="queue().length; else emptyQueue">
+          <li *ngFor="let entry of queue(); trackBy: trackQueue">
+            <div class="queue-item">
+              <strong>{{ entry.conversationId }}</strong>
+              <span class="queue-item__channel">{{ entry.channel || 'web' }}</span>
+              <small *ngIf="entry.enqueuedAt">Waiting since {{ entry.enqueuedAt | date : 'shortTime' }}</small>
+            </div>
+            <button
+              type="button"
+              class="btn btn-primary"
+              (click)="joinConversation(entry)"
+              [disabled]="isConnecting()"
+            >
+              {{ isConnecting() ? 'Connecting...' : 'Join chat' }}
+            </button>
+          </li>
+        </ul>
+
+        <ng-template #emptyQueue>
+          <div class="empty-state">
+            <p>No customers are waiting right now.</p>
+          </div>
+        </ng-template>
+      </aside>
+
+      <section class="chat-panel" [ngSwitch]="stage()">
+        <div *ngSwitchCase="AgentStage.Idle" class="chat-placeholder">
+          <p>Select a chat request from the queue to get started.</p>
+        </div>
+
+        <div *ngSwitchCase="AgentStage.Active" class="chat-session">
+          <header class="chat-session__header" *ngIf="activeConversation() as convo">
+            <div>
+              <h3>{{ convo.customer?.displayName || convo.customer?.id }}</h3>
+              <small>Conversation {{ convo.id }}</small>
+            </div>
+            <button type="button" class="btn btn-secondary" (click)="closeConversation()" [disabled]="isSending()">
+              End chat
+            </button>
+          </header>
+
+          <div class="chat-session__status">{{ statusText() }}</div>
+
+          <div class="message-list" [class.message-list--empty]="!messages().length">
+            <article
+              *ngFor="let message of messages(); trackBy: trackMessage"
+              [ngClass]="messageClasses(message)"
+            >
+              <header>
+                <span>{{ message.sender?.displayName || (message.sender?.type === 'CUSTOMER' ? 'Customer' : 'You') }}</span>
+                <time>{{ message.timestamp | date : 'shortTime' }}</time>
+              </header>
+              <p>{{ message.content }}</p>
+            </article>
+          </div>
+
+          <div class="chat-error" *ngIf="chatError()">{{ chatError() }}</div>
+
+          <form class="composer" [formGroup]="messageForm" (ngSubmit)="sendMessage()">
+            <textarea
+              formControlName="content"
+              rows="3"
+              placeholder="Write a reply..."
+              [disabled]="isSending()"
+            ></textarea>
+            <div class="composer__actions">
+              <button type="submit" class="btn btn-primary" [disabled]="messageForm.invalid || isSending()">
+                {{ isSending() ? 'Sending...' : 'Send' }}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div *ngSwitchCase="AgentStage.Ended" class="chat-placeholder">
+          <p>The conversation has ended. Choose another request from the queue when you're ready.</p>
+        </div>
+      </section>
+    </section>
+  </ng-template>
+</div>
+

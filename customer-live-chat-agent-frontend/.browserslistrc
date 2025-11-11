@@ -1,0 +1,6 @@
+# This file is used by the build system to adjust the JavaScript output to support the specified browsers.
+last 2 Chrome versions
+last 2 Firefox versions
+Safari >= 16
+Edge >= 117
+

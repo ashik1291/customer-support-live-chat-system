@@ -1,0 +1,110 @@
+<div class="chat-launcher" [class.chat-launcher--open]="isWidgetOpen()">
+  <button
+    *ngIf="!isWidgetOpen()"
+    type="button"
+    class="launch-button"
+    (click)="openWidget()"
+  >
+    Chat with us
+  </button>
+
+  <section *ngIf="isWidgetOpen()" class="chat-widget">
+    <header class="chat-widget__header">
+      <div>
+        <h2>Live Support</h2>
+        <p>{{ statusText() }}</p>
+      </div>
+      <button type="button" class="close-button" (click)="closeWidget()">Close</button>
+    </header>
+
+    <div class="chat-widget__body">
+      <div class="alert alert-error" *ngIf="errorText() as error">
+        {{ error }}
+      </div>
+
+      <ng-container [ngSwitch]="stage()">
+        <div *ngSwitchCase="ChatStage.Confirm" class="chat-prompt">
+          <h3>Start a conversation?</h3>
+          <p>Connect with our support team in just a few seconds.</p>
+          <div class="chat-prompt__actions">
+            <button type="button" class="btn btn-secondary" (click)="closeWidget()">Not now</button>
+            <button type="button" class="btn btn-primary" (click)="startConversation()">Start chat</button>
+          </div>
+        </div>
+
+        <div *ngSwitchCase="ChatStage.Connecting" class="chat-loader">
+          <span class="spinner" aria-hidden="true"></span>
+          <p>Setting things up...</p>
+        </div>
+
+        <div *ngSwitchCase="ChatStage.Waiting" class="chat-session">
+          <div class="message-list" [class.message-list--empty]="!messages().length">
+            <article
+              *ngFor="let message of messages(); trackBy: trackByMessageId"
+              [ngClass]="messageClasses(message)"
+            >
+              <header>
+                <span class="sender">{{ message.sender?.displayName || (message.sender?.type === 'AGENT' ? 'Agent' : 'You') }}</span>
+                <time>{{ message.timestamp | date : 'shortTime' }}</time>
+              </header>
+              <p>{{ message.content }}</p>
+            </article>
+          </div>
+          <p class="queue-hint">
+            <ng-container *ngIf="queueStatus() as queue">
+              Position in line: <strong>{{ (queue.position ?? 0) + 1 }}</strong>
+              <ng-container *ngIf="formatEstimate(queue.estimatedWait) as wait">
+                - Estimated wait {{ wait }}
+              </ng-container>
+            </ng-container>
+            <ng-container *ngIf="!queueStatus()">We'll notify you here as soon as someone joins.</ng-container>
+          </p>
+        </div>
+
+        <div *ngSwitchCase="ChatStage.Active" class="chat-session">
+          <div class="message-list" [class.message-list--empty]="!messages().length">
+            <article
+              *ngFor="let message of messages(); trackBy: trackByMessageId"
+              [ngClass]="messageClasses(message)"
+            >
+              <header>
+                <span class="sender">{{ message.sender?.displayName || (message.sender?.type === 'AGENT' ? 'Agent' : 'You') }}</span>
+                <time>{{ message.timestamp | date : 'shortTime' }}</time>
+              </header>
+              <p>{{ message.content }}</p>
+            </article>
+          </div>
+
+          <form class="composer" [formGroup]="messageForm" (ngSubmit)="sendMessage()">
+            <textarea formControlName="content" placeholder="Type your message..." rows="3" [disabled]="!canSendMessages()"></textarea>
+            <div class="composer__actions">
+              <button type="submit" class="btn btn-primary" [disabled]="messageForm.invalid || !canSendMessages() || isSending()">
+                {{ isSending() ? 'Sending...' : 'Send' }}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div *ngSwitchCase="ChatStage.Ended" class="chat-session chat-session--ended">
+          <div class="message-list" [class.message-list--empty]="!messages().length">
+            <article
+              *ngFor="let message of messages(); trackBy: trackByMessageId"
+              [ngClass]="messageClasses(message)"
+            >
+              <header>
+                <span class="sender">{{ message.sender?.displayName || (message.sender?.type === 'AGENT' ? 'Agent' : 'You') }}</span>
+                <time>{{ message.timestamp | date : 'shortTime' }}</time>
+              </header>
+              <p>{{ message.content }}</p>
+            </article>
+          </div>
+          <div class="chat-session__footer">
+            <p>Thanks for chatting with us! We're here when you need us again.</p>
+            <button type="button" class="btn btn-primary" (click)="restartChat()">Start a new chat</button>
+          </div>
+        </div>
+      </ng-container>
+    </div>
+  </section>
+</div>
+

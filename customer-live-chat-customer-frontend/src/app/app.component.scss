@@ -1,0 +1,328 @@
+@use 'sass:color';
+
+$primary: #2563eb;
+$primary-dark: #1d4ed8;
+$accent: #4f46e5;
+$background: #f8fafc;
+$surface: #ffffff;
+$text: #0f172a;
+$muted: #64748b;
+
+.chat-launcher {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1rem;
+
+  &--open .launch-button {
+    display: none;
+  }
+}
+
+.launch-button {
+  border: none;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, $primary, $accent);
+  color: #fff;
+  font-weight: 600;
+  padding: 0.9rem 1.8rem;
+  box-shadow: 0 20px 40px rgba($primary, 0.4);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 24px 44px rgba($primary, 0.45);
+  }
+}
+
+.chat-widget {
+  width: clamp(320px, 32vw, 380px);
+  border-radius: 1.5rem;
+  background: $surface;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-widget__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem 1rem;
+  background: linear-gradient(135deg, #1e3a8a, #312e81);
+  color: #e0e7ff;
+  gap: 1rem;
+
+  h2 {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+
+  p {
+    margin: 0.35rem 0 0;
+    font-size: 0.85rem;
+    color: rgba(#c7d2fe, 0.85);
+  }
+}
+
+.close-button {
+  border: none;
+  background: rgba(255, 255, 255, 0.15);
+  color: inherit;
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.chat-widget__body {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.25rem 1.25rem;
+  gap: 1rem;
+  max-height: 440px;
+}
+
+.alert {
+  padding: 0.65rem 0.85rem;
+  border-radius: 0.85rem;
+  font-size: 0.85rem;
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.chat-prompt {
+  display: grid;
+  gap: 0.75rem;
+  text-align: center;
+  padding: 1.25rem 0.75rem;
+
+  h3 {
+    margin: 0;
+    font-size: 1.05rem;
+  }
+
+  p {
+    margin: 0;
+    color: $muted;
+    font-size: 0.9rem;
+  }
+}
+
+.chat-prompt__actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.chat-loader {
+  display: grid;
+  place-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 0.5rem;
+  color: $muted;
+
+  .spinner {
+    width: 1.2rem;
+    height: 1.2rem;
+    border-radius: 999px;
+    border: 2px solid rgba($accent, 0.2);
+    border-top-color: $accent;
+    animation: spin 0.9s linear infinite;
+  }
+}
+
+.chat-session {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.chat-session--ended .chat-session__footer {
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 1rem;
+  padding: 1rem;
+  text-align: center;
+  color: $muted;
+  font-size: 0.92rem;
+
+  p {
+    margin: 0 0 0.75rem;
+  }
+}
+
+.message-list {
+  flex: 1;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-right: 0.25rem;
+
+  &--empty {
+    background: rgba(15, 23, 42, 0.04);
+    border-radius: 1.1rem;
+    padding: 1.5rem 1rem;
+    text-align: center;
+    color: $muted;
+  }
+}
+
+.message-bubble {
+  max-width: 80%;
+  padding: 0.7rem 1rem;
+  border-radius: 1.1rem;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
+  display: grid;
+  gap: 0.35rem;
+  background: #f4f4f5;
+  color: $text;
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  p {
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  &.message-customer {
+    margin-left: auto;
+    background: linear-gradient(135deg, $accent, $primary);
+    color: #fff;
+  }
+
+  &.message-agent {
+    background: $surface;
+  }
+
+  &.message-system {
+    margin: 0 auto;
+    text-align: center;
+    background: rgba(14, 116, 144, 0.12);
+    color: #0f766e;
+    box-shadow: none;
+  }
+}
+
+.queue-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: $muted;
+  background: rgba(37, 99, 235, 0.08);
+  padding: 0.6rem 0.75rem;
+  border-radius: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+
+  textarea {
+    border-radius: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    padding: 0.75rem 0.9rem;
+    resize: none;
+    min-height: 70px;
+    font: inherit;
+    background: $background;
+    transition: border 0.2s ease, box-shadow 0.2s ease;
+
+    &:focus {
+      outline: none;
+      border-color: $accent;
+      box-shadow: 0 0 0 3px rgba($accent, 0.2);
+      background: #fff;
+    }
+  }
+}
+
+.composer__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn {
+  border: none;
+  border-radius: 9999px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.65rem 1.4rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+
+  &.btn-primary {
+    background: linear-gradient(135deg, $primary, $accent);
+    color: #fff;
+    box-shadow: 0 18px 30px rgba($primary, 0.3);
+
+    &:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 22px 36px rgba($primary, 0.4);
+    }
+  }
+
+  &.btn-secondary {
+    background: #fff;
+    color: $primary;
+    border: 1px solid rgba($primary, 0.2);
+
+    &:hover:not(:disabled) {
+      border-color: rgba($primary, 0.3);
+      background: rgba($primary, 0.05);
+    }
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+}
+
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 2px solid rgba($accent, 0.2);
+  border-top-color: $accent;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 600px) {
+  .chat-launcher {
+    right: 1rem;
+    bottom: 1rem;
+  }
+
+  .chat-widget {
+    width: calc(100vw - 2rem);
+  }
+}
+

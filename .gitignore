@@ -1,0 +1,62 @@
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor and project metadata
+.idea/
+.vscode/
+**/.project
+**/.classpath
+**/.settings/
+
+# Backend (Spring Boot / Gradle)
+customer-live-chat/.gradle/
+customer-live-chat/build/
+customer-live-chat/.kotlin/
+customer-live-chat/out/
+customer-live-chat/bin/
+customer-live-chat/nbproject/private/
+customer-live-chat/nbbuild/
+customer-live-chat/dist/
+customer-live-chat/nbdist/
+customer-live-chat/.nb-gradle/
+
+# Preserve Gradle wrapper
+!customer-live-chat/gradle/wrapper/gradle-wrapper.jar
+
+# Frontend builds and dependencies (Angular)
+customer-live-chat-agent-frontend/dist/
+customer-live-chat-agent-frontend/tmp/
+customer-live-chat-agent-frontend/out-tsc/
+customer-live-chat-agent-frontend/bazel-out/
+customer-live-chat-agent-frontend/node_modules/
+customer-live-chat-agent-frontend/.angular/cache/
+customer-live-chat-agent-frontend/coverage/
+
+customer-live-chat-customer-frontend/dist/
+customer-live-chat-customer-frontend/tmp/
+customer-live-chat-customer-frontend/out-tsc/
+customer-live-chat-customer-frontend/bazel-out/
+customer-live-chat-customer-frontend/node_modules/
+customer-live-chat-customer-frontend/.angular/cache/
+customer-live-chat-customer-frontend/coverage/
+
+# Environment files
+**/.env
+**/.env.*
+
+# Logs
+**/*.log
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
+**/pnpm-debug.log*
+**/lerna-debug.log*
+
+# Misc
+**/*.suo
+**/*.ntvs*
+**/*.njsproj
+**/*.sln
+**/*.sw?
+

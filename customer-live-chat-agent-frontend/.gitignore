@@ -1,0 +1,48 @@
+# Angular build outputs
+dist/
+tmp/
+out-tsc/
+bazel-out/
+
+# Dependencies
+node_modules/
+
+# Angular CLI cache
+.angular/cache/
+
+# Testing and coverage
+coverage/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment files
+.env
+.env.*
+
+# IDE and editor artifacts
+.idea/
+.project
+.classpath
+.settings/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Miscellaneous
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
