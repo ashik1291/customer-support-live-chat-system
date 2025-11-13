@@ -25,5 +25,6 @@ public class ConversationMetadata implements Serializable {
     private Instant closedAt;
     private List<String> tags;
     private Map<String, Object> attributes;
+    private Long version;
 }
 

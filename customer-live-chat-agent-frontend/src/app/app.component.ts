@@ -14,9 +14,10 @@ import {
   signal
 } from '@angular/core';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Subscription, catchError, interval, of, startWith, switchMap, take } from 'rxjs';
+import { Subscription, catchError, of, take } from 'rxjs';
 import { ChatApiService } from './chat-api.service';
 import { AgentSocketConnection, ChatSocketService } from './chat-socket.service';
+import { QueueSocketService } from './queue-socket.service';
 import { ChatMessage, ChatParticipant, ConversationMetadata, QueueEntry } from './models';
 
 enum AgentStage {
@@ -60,6 +61,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   private readonly fb = inject(FormBuilder);
   private readonly api = inject(ChatApiService);
   private readonly sockets = inject(ChatSocketService);
+  private readonly queueSockets = inject(QueueSocketService);
 
   readonly agentSession = signal<AgentSession | null>(null);
   readonly queue = signal<QueueEntry[]>([]);
@@ -99,14 +101,14 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   @ViewChildren('chatHistory') private chatHistories?: QueryList<ElementRef<HTMLDivElement>>;
 
   private readonly chatHistoryMap = new Map<string, HTMLDivElement>();
-  private queueSubscription?: Subscription;
+  private readonly queueSocketSubscriptions: Subscription[] = [];
 
   ngOnInit(): void {
     const stored = this.readStoredSession();
     if (stored) {
       this.agentSession.set(stored);
       this.loginForm.patchValue(stored);
-      this.startQueuePolling();
+      this.initializeQueueStream(stored);
       this.restoreActiveChats(stored);
     }
   }
@@ -117,7 +119,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   ngOnDestroy(): void {
-    this.stopQueuePolling();
+    this.destroyQueueSocket();
     this.teardownAllChats();
     this.sockets.disconnectAll();
   }
@@ -137,12 +139,12 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     const session: AgentSession = { agentId, displayName };
     this.agentSession.set(session);
     this.persistSession(session);
-    this.startQueuePolling();
+    this.initializeQueueStream(session);
     this.restoreActiveChats(session);
   }
 
   signOut(): void {
-    this.stopQueuePolling();
+    this.destroyQueueSocket();
     this.teardownAllChats();
     this.sockets.disconnectAll();
     this.agentSession.set(null);
@@ -184,8 +186,8 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
           const message = this.resolveErrorMessage(error, 'Unable to join this chat request.');
           this.chatError.set(message);
           this.setQueueActionError(entry.conversationId, message);
+          this.queue.update((entries) => entries.filter((candidate) => candidate.conversationId !== entry.conversationId));
           this.isConnecting.set(false);
-          this.refreshQueue();
           return of<ConversationMetadata | null>(null);
         })
       )
@@ -194,27 +196,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         if (conversation) {
           this.openConversationSession(conversation, agent);
           this.setQueueActionError(entry.conversationId, null);
-          this.refreshQueue();
         }
-      });
-  }
-
-  refreshQueue(): void {
-    this.api
-      .listQueue()
-      .pipe(
-        take(1),
-        catchError((error) => {
-          console.error(error);
-          this.queueError.set(this.resolveErrorMessage(error, 'Unable to load the queue.'));
-          return of<QueueEntry[]>([]);
-        })
-      )
-      .subscribe((entries) => {
-        this.queueError.set(null);
-        this.queue.set(entries);
-        this.ensureQueuePageInRange(entries.length);
-        this.pruneQueueActionErrors(entries);
       });
   }
 
@@ -297,7 +279,6 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
           session.isSending = false;
           session.statusText = 'Closed';
         });
-        this.refreshQueue();
       });
   }
 
@@ -631,34 +612,27 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     }
   }
 
-  private startQueuePolling(): void {
-    this.stopQueuePolling();
-    this.refreshQueue();
-
-    this.queueSubscription = interval(5000)
-      .pipe(
-        startWith(0),
-        switchMap(() =>
-          this.api.listQueue().pipe(
-            catchError((error) => {
-              console.error(error);
-              this.queueError.set(this.resolveErrorMessage(error, 'Unable to refresh the queue.'));
-              return of<QueueEntry[]>([]);
-            })
-          )
-        )
-      )
-      .subscribe((entries) => {
+  private initializeQueueStream(session: AgentSession): void {
+    this.destroyQueueSocket();
+    this.queueSockets.connect(session.agentId, session.displayName);
+    this.queueSocketSubscriptions.push(
+      this.queueSockets.snapshots().subscribe((entries) => {
         this.queueError.set(null);
         this.queue.set(entries);
         this.ensureQueuePageInRange(entries.length);
         this.pruneQueueActionErrors(entries);
-      });
+      })
+    );
+    this.queueSocketSubscriptions.push(
+      this.queueSockets.errors().subscribe((error) => this.queueError.set(error))
+    );
   }
 
-  private stopQueuePolling(): void {
-    this.queueSubscription?.unsubscribe();
-    this.queueSubscription = undefined;
+  private destroyQueueSocket(): void {
+    this.queueSockets.disconnect();
+    while (this.queueSocketSubscriptions.length) {
+      this.queueSocketSubscriptions.pop()?.unsubscribe();
+    }
   }
 
   private restoreActiveChats(agent: AgentSession): void {

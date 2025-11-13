@@ -4,6 +4,7 @@ import com.example.chat.domain.ChatParticipant;
 import com.example.chat.domain.ConversationMetadata;
 import com.example.chat.domain.QueueEntry;
 import com.example.chat.domain.ConversationStatus;
+import com.example.chat.config.ChatProperties;
 import com.example.chat.dto.AgentAcceptRequest;
 import com.example.chat.dto.AgentActionRequest;
 import com.example.chat.service.AgentQueueService;
@@ -32,19 +33,24 @@ public class AgentController {
     private final AgentQueueService agentQueueService;
     private final ConversationService conversationService;
     private final ParticipantIdentityService participantIdentityService;
+    private final ChatProperties chatProperties;
 
     public AgentController(
             AgentQueueService agentQueueService,
             ConversationService conversationService,
-            ParticipantIdentityService participantIdentityService) {
+            ParticipantIdentityService participantIdentityService,
+            ChatProperties chatProperties) {
         this.agentQueueService = agentQueueService;
         this.conversationService = conversationService;
         this.participantIdentityService = participantIdentityService;
+        this.chatProperties = chatProperties;
     }
 
     @GetMapping("/queue")
-    public ResponseEntity<List<QueueEntry>> listQueue() {
-        return ResponseEntity.ok(agentQueueService.listQueue(100));
+    public ResponseEntity<List<QueueEntry>> listQueue(
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "50") int size) {
+        return ResponseEntity.ok(agentQueueService.listQueue(page, size));
     }
 
     @GetMapping("/conversations")

@@ -8,6 +8,18 @@ spring:
   jackson:
     serialization:
       write-dates-as-timestamps: false
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chatdb}
+    username: ${DATABASE_USERNAME:chat}
+    password: ${DATABASE_PASSWORD:chat}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
   data:
     redis:
       host: ${REDIS_HOST:localhost}

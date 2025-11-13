@@ -12,6 +12,7 @@ import com.example.chat.event.ChatEvent;
 import com.example.chat.event.ChatEventPublisher;
 import com.example.chat.event.ChatEventType;
 import com.example.chat.event.ChatMessageEvent;
+import com.example.chat.service.exception.ServiceException;
 import java.time.Instant;
 import java.time.Duration;
 import java.util.HashMap;
@@ -20,11 +21,16 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.redisson.api.RBucket;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.codec.StringCodec;
 
 @Service
 @RequiredArgsConstructor
@@ -36,8 +42,8 @@ public class ConversationService {
     private final AgentAssignmentService agentAssignmentService;
     private final ChatEventPublisher eventPublisher;
     private final ChatProperties chatProperties;
-    private final StringRedisTemplate stringRedisTemplate;
     private final RedisKeyFactory keyFactory;
+    private final RedissonClient redissonClient;
 
     @Transactional
     public ConversationMetadata startConversation(ChatParticipant customer, Map<String, Object> attributes) {
@@ -65,35 +71,41 @@ public class ConversationService {
         return conversation;
     }
 
+    @Transactional
     public void queueForAgent(ConversationMetadata conversation, String channel) {
-        Instant now = Instant.now();
-        conversation.setStatus(ConversationStatus.QUEUED);
-        conversation.setUpdatedAt(now);
-        ChatParticipant previousAgent = conversation.getAgent();
-        if (previousAgent != null) {
-            agentAssignmentService.removeAssignment(previousAgent.getId(), conversation.getId());
-            conversation.setAgent(null);
+        if (conversation == null || !StringUtils.hasText(conversation.getId())) {
+            throw new ServiceException(HttpStatus.BAD_REQUEST, "Conversation id is required");
         }
-        conversationRepository.saveConversation(conversation);
-        releaseAssignment(conversation.getId());
+        withConversationLock(conversation.getId(), () -> {
+            Instant now = Instant.now();
+            conversation.setStatus(ConversationStatus.QUEUED);
+            conversation.setUpdatedAt(now);
+            ChatParticipant previousAgent = conversation.getAgent();
+            if (previousAgent != null) {
+                agentAssignmentService.removeAssignment(previousAgent.getId(), conversation.getId());
+                conversation.setAgent(null);
+            }
+            conversationRepository.saveConversation(conversation);
+            releaseAssignment(conversation.getId());
 
-        QueueEntry entry = QueueEntry.builder()
-                .conversationId(conversation.getId())
-                .customerId(conversation.getCustomer().getId())
-                .customerName(conversation.getCustomer().getDisplayName())
-                .customerPhone(resolveCustomerPhone(conversation))
-                .channel(channel)
-                .enqueuedAt(now)
-                .build();
-        queueService.enqueue(entry);
+            QueueEntry entry = QueueEntry.builder()
+                    .conversationId(conversation.getId())
+                    .customerId(conversation.getCustomer().getId())
+                    .customerName(conversation.getCustomer().getDisplayName())
+                    .customerPhone(resolveCustomerPhone(conversation))
+                    .channel(channel)
+                    .enqueuedAt(now)
+                    .build();
+            queueService.enqueue(entry);
 
-        eventPublisher.publishLifecycleEvent(ChatEvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .conversationId(conversation.getId())
-                .type(ChatEventType.CONVERSATION_QUEUED)
-                .occurredAt(now)
-                .payload(Map.of("queuePosition", queueService.position(conversation.getId())))
-                .build());
+            eventPublisher.publishLifecycleEvent(ChatEvent.builder()
+                    .eventId(UUID.randomUUID().toString())
+                    .conversationId(conversation.getId())
+                    .type(ChatEventType.CONVERSATION_QUEUED)
+                    .occurredAt(now)
+                    .payload(Map.of("queuePosition", queueService.position(conversation.getId())))
+                    .build());
+        });
     }
 
     public Optional<ConversationMetadata> getConversation(String conversationId) {
@@ -106,7 +118,7 @@ public class ConversationService {
 
     public List<ConversationMetadata> getConversationsForAgent(String agentId, Set<ConversationStatus> statuses) {
         if (!StringUtils.hasText(agentId)) {
-            throw new IllegalArgumentException("Agent identifier is required");
+            throw new ServiceException(HttpStatus.BAD_REQUEST, "Agent identifier is required");
         }
 
         Set<ConversationStatus> filters = statuses == null || statuses.isEmpty() ? Set.of() : Set.copyOf(statuses);
@@ -133,200 +145,212 @@ public class ConversationService {
                 .toList();
     }
 
+    @Transactional
     public ConversationMetadata acceptConversation(ChatParticipant agent, String conversationId) {
-        ConversationMetadata conversation = conversationRepository
-                .getConversation(conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("Conversation not found"));
+        return withConversationLock(conversationId, () -> {
+            ConversationMetadata conversation = conversationRepository
+                    .getConversation(conversationId)
+                    .orElseThrow(() -> new ServiceException(HttpStatus.NOT_FOUND, "Conversation not found"));
 
-        if (conversation.getStatus() == ConversationStatus.CLOSED) {
-            throw new IllegalStateException("Conversation already closed");
-        }
-
-        if (conversation.getAgent() != null
-                && !agent.getId().equals(conversation.getAgent().getId())) {
-            throw new IllegalStateException("Conversation already assigned to another agent.");
-        }
-
-        boolean alreadyAssignedToAgent = conversation.getAgent() != null
-                && agent.getId().equals(conversation.getAgent().getId());
-
-        if (alreadyAssignedToAgent && conversation.getStatus() == ConversationStatus.ASSIGNED) {
-            queueService.remove(conversationId);
-            extendAssignment(conversationId);
-            agentAssignmentService.registerAssignment(agent.getId(), conversationId);
-            return conversation;
-        }
-
-        if (!alreadyAssignedToAgent && !agentAssignmentService.canAssign(agent.getId())) {
-            throw new IllegalStateException("Agent reached maximum concurrent conversations");
-        }
-
-        if (conversation.getStatus() != ConversationStatus.QUEUED) {
-            releaseAssignment(conversationId);
-            throw new IllegalStateException("Conversation is no longer available to accept.");
-        }
-
-        AgentQueueService.ClaimResult claimResult = queueService.claimForAgent(
-                conversationId, agent.getId(), chatProperties.getRedis().getConversationTtl());
-        AgentQueueService.ClaimStatus claimStatus = claimResult.status();
-
-        if (claimStatus == AgentQueueService.ClaimStatus.BUSY) {
-            throw new IllegalStateException("Conversation already assigned to another agent.");
-        }
-
-        if (claimStatus == AgentQueueService.ClaimStatus.MISSING) {
-            releaseAssignment(conversationId);
-            throw new IllegalStateException("Conversation already assigned to another agent.");
-        }
-
-        if (claimStatus == AgentQueueService.ClaimStatus.OWNED) {
-            extendAssignment(conversationId);
-            agentAssignmentService.registerAssignment(agent.getId(), conversationId);
-            if (conversation.getAgent() == null) {
-                conversation.setAgent(agent);
+            if (conversation.getStatus() == ConversationStatus.CLOSED) {
+                throw new ServiceException(HttpStatus.CONFLICT, "Conversation already closed");
             }
-            if (conversation.getStatus() != ConversationStatus.ASSIGNED) {
-                conversation.setStatus(ConversationStatus.ASSIGNED);
-                conversation.setUpdatedAt(Instant.now());
-                if (conversation.getAcceptedAt() == null) {
-                    conversation.setAcceptedAt(Instant.now());
+
+            if (conversation.getAgent() != null
+                    && !agent.getId().equals(conversation.getAgent().getId())) {
+                throw new ServiceException(HttpStatus.CONFLICT, "Conversation already assigned to another agent.");
+            }
+
+            boolean alreadyAssignedToAgent = conversation.getAgent() != null
+                    && agent.getId().equals(conversation.getAgent().getId());
+
+            if (alreadyAssignedToAgent && conversation.getStatus() == ConversationStatus.ASSIGNED) {
+                queueService.remove(conversationId);
+                extendAssignment(conversationId);
+                agentAssignmentService.registerAssignment(agent.getId(), conversationId);
+                return conversation;
+            }
+
+            if (!alreadyAssignedToAgent && !agentAssignmentService.canAssign(agent.getId())) {
+                throw new ServiceException(HttpStatus.TOO_MANY_REQUESTS, "Agent reached maximum concurrent conversations");
+            }
+
+            if (conversation.getStatus() != ConversationStatus.QUEUED) {
+                queueService.remove(conversationId);
+                releaseAssignment(conversationId);
+                throw new ServiceException(HttpStatus.GONE, "Conversation is no longer available to accept.");
+            }
+
+            AgentQueueService.ClaimResult claimResult = queueService.claimForAgent(
+                    conversationId, agent.getId(), chatProperties.getRedis().getConversationTtl());
+            AgentQueueService.ClaimStatus claimStatus = claimResult.status();
+
+            if (claimStatus == AgentQueueService.ClaimStatus.BUSY) {
+                queueService.remove(conversationId);
+                throw new ServiceException(HttpStatus.CONFLICT, "Conversation already assigned to another agent.");
+            }
+
+            if (claimStatus == AgentQueueService.ClaimStatus.MISSING) {
+                queueService.remove(conversationId);
+                releaseAssignment(conversationId);
+                throw new ServiceException(HttpStatus.GONE, "Conversation is no longer available to accept.");
+            }
+
+            if (claimStatus == AgentQueueService.ClaimStatus.OWNED) {
+                extendAssignment(conversationId);
+                agentAssignmentService.registerAssignment(agent.getId(), conversationId);
+                if (conversation.getAgent() == null) {
+                    conversation.setAgent(agent);
                 }
-                conversationRepository.saveConversation(conversation);
+                if (conversation.getStatus() != ConversationStatus.ASSIGNED) {
+                    conversation.setStatus(ConversationStatus.ASSIGNED);
+                    conversation.setUpdatedAt(Instant.now());
+                    if (conversation.getAcceptedAt() == null) {
+                        conversation.setAcceptedAt(Instant.now());
+                    }
+                    conversationRepository.saveConversation(conversation);
+                }
+                return conversation;
             }
+
+            Instant now = Instant.now();
+            conversation.setAgent(agent);
+            conversation.setStatus(ConversationStatus.ASSIGNED);
+            conversation.setAcceptedAt(now);
+            conversation.setUpdatedAt(now);
+
+            conversationRepository.saveConversation(conversation);
+            agentAssignmentService.registerAssignment(agent.getId(), conversationId);
+
+            eventPublisher.publishLifecycleEvent(ChatEvent.builder()
+                    .eventId(UUID.randomUUID().toString())
+                    .conversationId(conversationId)
+                    .type(ChatEventType.CONVERSATION_ACCEPTED)
+                    .occurredAt(conversation.getAcceptedAt())
+                    .payload(Map.of("agentId", agent.getId()))
+                    .build());
+
             return conversation;
-        }
-
-        Instant now = Instant.now();
-        conversation.setAgent(agent);
-        conversation.setStatus(ConversationStatus.ASSIGNED);
-        conversation.setAcceptedAt(now);
-        conversation.setUpdatedAt(now);
-
-        conversationRepository.saveConversation(conversation);
-        agentAssignmentService.registerAssignment(agent.getId(), conversationId);
-
-        eventPublisher.publishLifecycleEvent(ChatEvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .conversationId(conversationId)
-                .type(ChatEventType.CONVERSATION_ACCEPTED)
-                .occurredAt(conversation.getAcceptedAt())
-                .payload(Map.of("agentId", agent.getId()))
-                .build());
-
-        return conversation;
+        });
     }
 
+    @Transactional
     public ChatMessage sendMessage(String conversationId, ChatParticipant sender, String content, ChatMessageType type) {
-        ConversationMetadata conversation = conversationRepository
-                .getConversation(conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("Conversation not found"));
+        return withConversationLock(conversationId, () -> {
+            ConversationMetadata conversation = conversationRepository
+                    .getConversation(conversationId)
+                    .orElseThrow(() -> new ServiceException(HttpStatus.NOT_FOUND, "Conversation not found"));
 
-        if (conversation.getStatus() == ConversationStatus.CLOSED) {
-            throw new IllegalStateException("Conversation closed");
-        }
+            if (conversation.getStatus() == ConversationStatus.CLOSED) {
+                throw new ServiceException(HttpStatus.GONE, "Conversation closed");
+            }
 
-        Instant now = Instant.now();
+            Instant now = Instant.now();
 
-        ChatMessage message = ChatMessage.builder()
-                .id(UUID.randomUUID().toString())
-                .conversationId(conversationId)
-                .sender(sender)
-                .type(type)
-                .content(content)
-                .timestamp(now)
-                .build();
+            ChatMessage message = ChatMessage.builder()
+                    .id(UUID.randomUUID().toString())
+                    .conversationId(conversationId)
+                    .sender(sender)
+                    .type(type)
+                    .content(content)
+                    .timestamp(now)
+                    .build();
 
-        conversation.setUpdatedAt(now);
-        conversationRepository.saveConversation(conversation);
-        conversationRepository.appendMessage(message);
+            conversation.setUpdatedAt(now);
+            conversationRepository.saveConversation(conversation);
+            conversationRepository.appendMessage(message);
 
-        presenceService.markPresent(sender.getId());
+            presenceService.markPresent(sender.getId());
 
-        eventPublisher.publishMessageEvent(ChatMessageEvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .conversationId(conversationId)
-                .message(message)
-                .occurredAt(now)
-                .build());
+            eventPublisher.publishMessageEvent(ChatMessageEvent.builder()
+                    .eventId(UUID.randomUUID().toString())
+                    .conversationId(conversationId)
+                    .message(message)
+                    .occurredAt(now)
+                    .build());
 
-        eventPublisher.publishLifecycleEvent(ChatEvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .conversationId(conversationId)
-                .type(ChatEventType.MESSAGE_RECEIVED)
-                .occurredAt(now)
-                .payload(Map.of("senderId", sender.getId()))
-                .build());
+            eventPublisher.publishLifecycleEvent(ChatEvent.builder()
+                    .eventId(UUID.randomUUID().toString())
+                    .conversationId(conversationId)
+                    .type(ChatEventType.MESSAGE_RECEIVED)
+                    .occurredAt(now)
+                    .payload(Map.of("senderId", sender.getId()))
+                    .build());
 
-        return message;
+            return message;
+        });
     }
 
+    @Transactional
     public ConversationMetadata closeConversation(String conversationId, ChatParticipant closedBy) {
-        ConversationMetadata conversation = conversationRepository
-                .getConversation(conversationId)
-                .orElseThrow(() -> new IllegalArgumentException("Conversation not found"));
+        return withConversationLock(conversationId, () -> {
+            ConversationMetadata conversation = conversationRepository
+                    .getConversation(conversationId)
+                    .orElseThrow(() -> new ServiceException(HttpStatus.NOT_FOUND, "Conversation not found"));
 
-        Instant now = Instant.now();
+            Instant now = Instant.now();
 
-        String closingMessage = resolveClosingMessage(conversation, closedBy);
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("event", "CHAT_CLOSED");
-        if (closedBy != null && closedBy.getType() != null) {
-            metadata.put("closedByType", closedBy.getType().name());
-            if (StringUtils.hasText(closedBy.getDisplayName())) {
-                metadata.put("closedByDisplayName", closedBy.getDisplayName());
+            String closingMessage = resolveClosingMessage(conversation, closedBy);
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("event", "CHAT_CLOSED");
+            if (closedBy != null && closedBy.getType() != null) {
+                metadata.put("closedByType", closedBy.getType().name());
+                if (StringUtils.hasText(closedBy.getDisplayName())) {
+                    metadata.put("closedByDisplayName", closedBy.getDisplayName());
+                }
+            } else if (conversation.getAgent() != null) {
+                metadata.put("closedByType", ParticipantType.AGENT.name());
+                if (StringUtils.hasText(conversation.getAgent().getDisplayName())) {
+                    metadata.put("closedByDisplayName", conversation.getAgent().getDisplayName());
+                }
             }
-        } else if (conversation.getAgent() != null) {
-            metadata.put("closedByType", ParticipantType.AGENT.name());
-            if (StringUtils.hasText(conversation.getAgent().getDisplayName())) {
-                metadata.put("closedByDisplayName", conversation.getAgent().getDisplayName());
+
+            ChatMessage closureNotice = ChatMessage.builder()
+                    .id(UUID.randomUUID().toString())
+                    .conversationId(conversationId)
+                    .sender(ChatParticipant.builder()
+                            .id("system")
+                            .type(ParticipantType.SYSTEM)
+                            .displayName("System")
+                            .metadata(Map.of())
+                            .build())
+                    .type(ChatMessageType.SYSTEM)
+                    .content(closingMessage)
+                    .metadata(metadata)
+                    .timestamp(now)
+                    .build();
+
+            conversationRepository.appendMessage(closureNotice);
+
+            eventPublisher.publishMessageEvent(ChatMessageEvent.builder()
+                    .eventId(UUID.randomUUID().toString())
+                    .conversationId(conversationId)
+                    .message(closureNotice)
+                    .occurredAt(now)
+                    .build());
+
+            conversation.setStatus(ConversationStatus.CLOSED);
+            conversation.setClosedAt(now);
+            conversation.setUpdatedAt(now);
+            conversationRepository.saveConversation(conversation);
+            queueService.remove(conversationId);
+            if (conversation.getAgent() != null) {
+                agentAssignmentService.removeAssignment(conversation.getAgent().getId(), conversationId);
             }
-        }
+            releaseAssignment(conversationId);
 
-        ChatMessage closureNotice = ChatMessage.builder()
-                .id(UUID.randomUUID().toString())
-                .conversationId(conversationId)
-                .sender(ChatParticipant.builder()
-                        .id("system")
-                        .type(ParticipantType.SYSTEM)
-                        .displayName("System")
-                        .metadata(Map.of())
-                        .build())
-                .type(ChatMessageType.SYSTEM)
-                .content(closingMessage)
-                .metadata(metadata)
-                .timestamp(now)
-                .build();
+            eventPublisher.publishLifecycleEvent(ChatEvent.builder()
+                    .eventId(UUID.randomUUID().toString())
+                    .conversationId(conversationId)
+                    .type(ChatEventType.CONVERSATION_CLOSED)
+                    .occurredAt(conversation.getClosedAt())
+                    .payload(Map.of(
+                            "closedBy", closedBy != null ? closedBy.getId() : "system",
+                            "status", conversation.getStatus().name()))
+                    .build());
 
-        conversationRepository.appendMessage(closureNotice);
-
-        eventPublisher.publishMessageEvent(ChatMessageEvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .conversationId(conversationId)
-                .message(closureNotice)
-                .occurredAt(now)
-                .build());
-
-        conversation.setStatus(ConversationStatus.CLOSED);
-        conversation.setClosedAt(Instant.now());
-        conversation.setUpdatedAt(Instant.now());
-        conversationRepository.saveConversation(conversation);
-        queueService.remove(conversationId);
-        if (conversation.getAgent() != null) {
-            agentAssignmentService.removeAssignment(conversation.getAgent().getId(), conversationId);
-        }
-        releaseAssignment(conversationId);
-
-        eventPublisher.publishLifecycleEvent(ChatEvent.builder()
-                .eventId(UUID.randomUUID().toString())
-                .conversationId(conversationId)
-                .type(ChatEventType.CONVERSATION_CLOSED)
-                .occurredAt(conversation.getClosedAt())
-                .payload(Map.of(
-                        "closedBy", closedBy != null ? closedBy.getId() : "system",
-                        "status", conversation.getStatus().name()))
-                .build());
-
-        return conversation;
+            return conversation;
+        });
     }
 
     private String resolveClosingMessage(ConversationMetadata conversation, ChatParticipant closedBy) {
@@ -355,13 +379,15 @@ public class ConversationService {
     }
 
     private void extendAssignment(String conversationId) {
-        String key = keyFactory.conversationAssignmentKey(conversationId);
+        RBucket<String> bucket = assignmentBucket(conversationId);
         Duration ttl = chatProperties.getRedis().getConversationTtl();
-        stringRedisTemplate.expire(key, ttl);
+        if (ttl != null && !ttl.isNegative() && !ttl.isZero()) {
+            bucket.expire(ttl);
+        }
     }
 
     private void releaseAssignment(String conversationId) {
-        stringRedisTemplate.delete(keyFactory.conversationAssignmentKey(conversationId));
+        assignmentBucket(conversationId).delete();
     }
 
     private String resolveCustomerPhone(ConversationMetadata conversation) {
@@ -373,6 +399,34 @@ public class ConversationService {
             return phone.trim();
         }
         return null;
+    }
+
+    private RBucket<String> assignmentBucket(String conversationId) {
+        return redissonClient.getBucket(keyFactory.conversationAssignmentKey(conversationId), StringCodec.INSTANCE);
+    }
+
+    private void withConversationLock(String conversationId, Runnable action) {
+        withConversationLock(conversationId, () -> {
+            action.run();
+            return null;
+        });
+    }
+
+    private <T> T withConversationLock(String conversationId, Supplier<T> supplier) {
+        if (!StringUtils.hasText(conversationId)) {
+            throw new ServiceException(HttpStatus.BAD_REQUEST, "Conversation id is required");
+        }
+        RLock lock = conversationLock(conversationId);
+        lock.lock();
+        try {
+            return supplier.get();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private RLock conversationLock(String conversationId) {
+        return redissonClient.getLock(keyFactory.conversationAssignmentLockKey(conversationId));
     }
 }
 

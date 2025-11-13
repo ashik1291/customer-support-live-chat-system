@@ -20,8 +20,9 @@ export class ChatApiService {
 
   constructor(private readonly http: HttpClient) {}
 
-  listQueue(): Observable<QueueEntry[]> {
-    return this.http.get<QueueEntry[]>(`${this.baseUrl}/api/agent/queue`);
+  listQueue(page = 0, size = 50): Observable<QueueEntry[]> {
+    let params = new HttpParams().set('page', page).set('size', size);
+    return this.http.get<QueueEntry[]>(`${this.baseUrl}/api/agent/queue`, { params });
   }
 
   listAgentConversations(agentId: string, statuses: string[] = []): Observable<ConversationMetadata[]> {

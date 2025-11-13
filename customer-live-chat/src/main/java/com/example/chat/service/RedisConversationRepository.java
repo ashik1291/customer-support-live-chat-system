@@ -3,19 +3,23 @@ package com.example.chat.service;
 import com.example.chat.config.ChatProperties;
 import com.example.chat.domain.ChatMessage;
 import com.example.chat.domain.ConversationMetadata;
+import com.example.chat.domain.ConversationStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@Profile("redis-conversation-store")
 public class RedisConversationRepository implements ConversationRepository {
 
     private final RedisTemplate<String, Object> redisTemplate;
@@ -87,6 +91,34 @@ public class RedisConversationRepository implements ConversationRepository {
                 .map(this::readConversation)
                 .flatMap(Optional::stream)
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ConversationMetadata> findForAgent(String agentId, Set<ConversationStatus> statuses) {
+        return findAll().stream()
+                .filter(conversation -> conversation.getAgent() != null)
+                .filter(conversation -> agentId.equals(conversation.getAgent().getId()))
+                .filter(conversation -> statuses == null || statuses.isEmpty() || statuses.contains(conversation.getStatus()))
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<ConversationMetadata> findStaleConversations(Instant inactivityCutoff, Instant maxDurationCutoff) {
+        return findAll().stream()
+                .filter(conversation -> conversation.getStatus() != ConversationStatus.CLOSED)
+                .filter(conversation -> {
+                    Instant lastActivity = conversation.getUpdatedAt() != null
+                            ? conversation.getUpdatedAt()
+                            : conversation.getCreatedAt();
+                    boolean inactiveTooLong = inactivityCutoff != null
+                            && lastActivity != null
+                            && lastActivity.isBefore(inactivityCutoff);
+                    boolean exceededMaxDuration = maxDurationCutoff != null
+                            && conversation.getCreatedAt() != null
+                            && conversation.getCreatedAt().isBefore(maxDurationCutoff);
+                    return inactiveTooLong || exceededMaxDuration;
+                })
+                .toList();
     }
 
     private Duration ttl() {

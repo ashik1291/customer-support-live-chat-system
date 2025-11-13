@@ -145,6 +145,11 @@ public class ChatProperties {
          */
         private Duration entryTtl = Duration.ofMinutes(30);
 
+        /**
+         * Maximum number of queue entries to broadcast to connected agents.
+         */
+        private int broadcastLimit = 100;
+
         public Duration getMaxWait() {
             return maxWait;
         }
@@ -167,6 +172,14 @@ public class ChatProperties {
 
         public void setEntryTtl(Duration entryTtl) {
             this.entryTtl = entryTtl;
+        }
+
+        public int getBroadcastLimit() {
+            return broadcastLimit;
+        }
+
+        public void setBroadcastLimit(int broadcastLimit) {
+            this.broadcastLimit = broadcastLimit;
         }
     }
 

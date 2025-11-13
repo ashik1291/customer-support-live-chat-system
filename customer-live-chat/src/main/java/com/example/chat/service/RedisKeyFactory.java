@@ -36,12 +36,32 @@ public class RedisKeyFactory {
         return "%s:queue:pending".formatted(prefix());
     }
 
+    public String queueEntriesKey() {
+        return "%s:queue:entries".formatted(prefix());
+    }
+
+    public String queueLockKey() {
+        return "%s:queue:lock".formatted(prefix());
+    }
+
+    public String queueTopicName() {
+        return "%s:queue:topic".formatted(prefix());
+    }
+
     public String agentLoadKey(String agentId) {
         return "%s:agent:%s:load".formatted(prefix(), agentId);
     }
 
     public String agentConversationSetKey(String agentId) {
         return "%s:agent:%s:conversations".formatted(prefix(), agentId);
+    }
+
+    public String socketSessionMapKey() {
+        return "%s:socket:sessions".formatted(prefix());
+    }
+
+    public String conversationAssignmentLockKey(String conversationId) {
+        return "%s:conversation:%s:lock".formatted(prefix(), conversationId);
     }
 
     public String presenceKey(String participantId) {

@@ -3,32 +3,27 @@ package com.example.chat.service;
 import com.example.chat.config.ChatProperties;
 import java.time.Instant;
 import java.util.Optional;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import lombok.RequiredArgsConstructor;
+import org.redisson.api.RBucket;
+import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class PresenceService {
 
-    private final StringRedisTemplate redisTemplate;
+    private final RedissonClient redissonClient;
     private final RedisKeyFactory keyFactory;
     private final ChatProperties chatProperties;
 
-    public PresenceService(
-            StringRedisTemplate redisTemplate, RedisKeyFactory keyFactory, ChatProperties chatProperties) {
-        this.redisTemplate = redisTemplate;
-        this.keyFactory = keyFactory;
-        this.chatProperties = chatProperties;
-    }
-
     public void markPresent(String participantId) {
-        redisTemplate.opsForValue()
-                .set(keyFactory.presenceKey(participantId), Instant.now().toString(), chatProperties
-                        .getRedis()
-                        .getPresenceTtl());
+        RBucket<String> bucket = bucket(participantId);
+        bucket.set(Instant.now().toString());
+        bucket.expire(chatProperties.getRedis().getPresenceTtl());
     }
 
     public Optional<Instant> lastSeen(String participantId) {
-        String result = redisTemplate.opsForValue().get(keyFactory.presenceKey(participantId));
+        String result = bucket(participantId).get();
         if (result == null) {
             return Optional.empty();
         }
@@ -36,7 +31,11 @@ public class PresenceService {
     }
 
     public void markAbsent(String participantId) {
-        redisTemplate.delete(keyFactory.presenceKey(participantId));
+        bucket(participantId).delete();
+    }
+
+    private RBucket<String> bucket(String participantId) {
+        return redissonClient.getBucket(keyFactory.presenceKey(participantId));
     }
 }
 

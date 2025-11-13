@@ -57,41 +57,52 @@
               Maximum concurrent chats reached. Close a chat to accept another.
             </p>
 
-            <div class="queue-cards" *ngIf="queue().length; else emptyQueue">
-              <article class="queue-card" *ngFor="let entry of paginatedQueue(); trackBy: trackQueue">
-                <header class="queue-card__header">
-                  <span class="priority-badge">{{ queuePriority(entry) || '—' }}</span>
-                  <div class="queue-card__meta">
-                    <span class="channel-tag">{{ (entry.channel || 'web') | uppercase }}</span>
-                    <span class="queue-card__time">
-                      {{ entry.enqueuedAt ? (entry.enqueuedAt | date : 'shortTime') : '—' }}
-                    </span>
-                  </div>
-                </header>
-                <section class="queue-card__body">
-                  <div class="queue-card__customer">
-                    <strong class="queue-card__name">{{ queueCustomerLabel(entry) }}</strong>
-                    <div class="queue-card__visitor">
-                      <span class="queue-card__label">Visitor ID</span>
-                      <span class="queue-card__value">{{ entry.conversationId }}</span>
+            <ng-container *ngIf="queue().length; else emptyQueue">
+              <div class="queue-cards-viewport">
+                <div class="queue-cards">
+                  <article class="queue-card" *ngFor="let entry of paginatedQueue(); trackBy: trackQueue">
+                    <div class="queue-card__chips">
+                      <span class="priority-badge">{{ queuePriority(entry) || '—' }}</span>
+                      <span class="queue-card__chip">{{ (entry.channel || 'web') | uppercase }}</span>
+                      <span class="queue-card__chip">{{ entry.enqueuedAt ? (entry.enqueuedAt | date : 'shortTime') : '—' }}</span>
+                      <button
+                        type="button"
+                        class="btn btn-primary btn--compact queue-card__accept"
+                        (click)="joinConversation(entry)"
+                        [disabled]="isConnecting() || activeChats().length >= maxConcurrentChats"
+                      >
+                        Accept
+                      </button>
                     </div>
-                  </div>
-                </section>
-                <footer class="queue-card__footer">
-                  <button
-                    type="button"
-                    class="btn btn-primary btn--compact"
-                    (click)="joinConversation(entry)"
-                    [disabled]="isConnecting() || activeChats().length >= maxConcurrentChats"
-                  >
-                    {{ isConnecting() ? 'Connecting…' : 'Accept' }}
-                  </button>
-                  <div class="queue-row__error" *ngIf="queueActionErrors()[entry.conversationId]">
-                    {{ queueActionErrors()[entry.conversationId] }}
-                  </div>
-                </footer>
-              </article>
-            </div>
+
+                    <div class="queue-card__info">
+                      <h3 class="queue-card__name">{{ queueCustomerLabel(entry) }}</h3>
+                      <p class="queue-card__meta">Visitor ID <span>{{ entry.conversationId }}</span></p>
+                      <p class="queue-card__meta" *ngIf="entry.customerPhone">Phone <span>{{ entry.customerPhone }}</span></p>
+                    </div>
+
+                    <div class="queue-card__error" *ngIf="queueActionErrors()[entry.conversationId]">
+                      {{ queueActionErrors()[entry.conversationId] }}
+                    </div>
+                  </article>
+                </div>
+              </div>
+
+              <div class="queue-pagination" *ngIf="totalQueuePages() > 1">
+                <button type="button" class="icon-button" (click)="previousQueuePage()" [disabled]="queuePage() === 0">
+                  ‹
+                </button>
+                <span>Page {{ queuePage() + 1 }} of {{ totalQueuePages() }}</span>
+                <button
+                  type="button"
+                  class="icon-button"
+                  (click)="nextQueuePage()"
+                  [disabled]="queuePage() + 1 >= totalQueuePages()"
+                >
+                  ›
+                </button>
+              </div>
+            </ng-container>
 
             <ng-template #emptyQueue>
               <div class="empty-state">
@@ -99,20 +110,6 @@
               </div>
             </ng-template>
 
-            <div class="queue-pagination" *ngIf="totalQueuePages() > 1">
-              <button type="button" class="icon-button" (click)="previousQueuePage()" [disabled]="queuePage() === 0">
-                ‹
-              </button>
-              <span>Page {{ queuePage() + 1 }} of {{ totalQueuePages() }}</span>
-              <button
-                type="button"
-                class="icon-button"
-                (click)="nextQueuePage()"
-                [disabled]="queuePage() + 1 >= totalQueuePages()"
-              >
-                ›
-              </button>
-            </div>
           </div>
 
         </section>
@@ -168,7 +165,12 @@
 
                 <div class="chat-error" *ngIf="chat.errorText">{{ chat.errorText }}</div>
 
-                <form class="composer" [formGroup]="chat.messageForm" (ngSubmit)="sendMessage(chat.id)">
+                <form
+                  *ngIf="chat.stage !== AgentStage.Ended"
+                  class="composer"
+                  [formGroup]="chat.messageForm"
+                  (ngSubmit)="sendMessage(chat.id)"
+                >
                   <label class="sr-only" for="agent-message-{{ chat.id }}">Type your message</label>
                   <textarea
                     id="agent-message-{{ chat.id }}"

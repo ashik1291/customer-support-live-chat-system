@@ -1,6 +1,8 @@
 package com.example.chat.controller;
 
+import com.example.chat.service.exception.ServiceException;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -10,6 +12,17 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class RestExceptionHandler {
+
+    @ExceptionHandler(ServiceException.class)
+    public ResponseEntity<?> handleServiceException(ServiceException ex) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("timestamp", Instant.now().toString());
+        payload.put("error", ex.getMessage());
+        if (ex.getErrorCode() != null) {
+            payload.put("code", ex.getErrorCode());
+        }
+        return ResponseEntity.status(ex.getStatus()).body(payload);
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<?> handleValidation(MethodArgumentNotValidException ex) {

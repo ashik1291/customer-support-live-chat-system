@@ -4,6 +4,7 @@ import com.example.chat.config.ChatProperties;
 import com.example.chat.domain.ConversationMetadata;
 import com.example.chat.domain.ConversationStatus;
 import com.example.chat.domain.QueueEntry;
+import com.example.chat.service.exception.ServiceException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -57,45 +58,27 @@ public class ConversationHousekeepingScheduler {
     }
 
     private void enforceConversationTtl() {
-        List<ConversationMetadata> conversations = conversationRepository.findAll();
-        if (CollectionUtils.isEmpty(conversations)) {
-            return;
-        }
-
         Duration inactivityTimeout = chatProperties.getConversation().getInactivityTimeout();
         Duration maxDuration = chatProperties.getConversation().getMaxDuration();
         Instant now = Instant.now();
         Instant inactivityCutoff = computeCutoff(now, inactivityTimeout);
         Instant maxDurationCutoff = computeCutoff(now, maxDuration);
+        if (inactivityCutoff == null && maxDurationCutoff == null) {
+            return;
+        }
+
+        List<ConversationMetadata> conversations = conversationRepository.findStaleConversations(
+                inactivityCutoff, maxDurationCutoff);
+        if (CollectionUtils.isEmpty(conversations)) {
+            return;
+        }
 
         for (ConversationMetadata conversation : conversations) {
-            if (conversation.getStatus() == ConversationStatus.CLOSED) {
-                continue;
-            }
-
-            boolean shouldClose = false;
-            Instant lastActivity = conversation.getUpdatedAt() != null
-                    ? conversation.getUpdatedAt()
-                    : conversation.getCreatedAt();
-
-            if (lastActivity != null && isExceeded(inactivityTimeout, inactivityCutoff, lastActivity)) {
-                shouldClose = true;
-            }
-
-            if (!shouldClose && conversation.getCreatedAt() != null
-                    && isExceeded(maxDuration, maxDurationCutoff, conversation.getCreatedAt())) {
-                shouldClose = true;
-            }
-
-            if (!shouldClose) {
-                continue;
-            }
-
             try {
                 log.debug("Automatically closing conversation {} due to inactivity/TTL thresholds", conversation.getId());
                 conversationService.closeConversation(conversation.getId(), null);
-            } catch (IllegalArgumentException ignored) {
-                log.trace("Conversation {} already removed before housekeeping processed it", conversation.getId());
+            } catch (ServiceException ex) {
+                log.trace("Conversation {} already removed before housekeeping processed it", conversation.getId(), ex);
             } catch (Exception ex) {
                 log.warn("Failed to automatically close conversation {}", conversation.getId(), ex);
             }
